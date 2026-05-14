@@ -330,5 +330,219 @@ function saveQuote(){if(!draftItems.length)return alert("Adicione peças.");cons
 function importXlsx(){const file=$("fileXlsx").files[0];if(!file)return alert("Escolha a planilha.");const reader=new FileReader();reader.onload=e=>{const wb=XLSX.read(new Uint8Array(e.target.result),{type:"array"});let rows=[];wb.SheetNames.forEach(n=>rows.push(...XLSX.utils.sheet_to_json(wb.Sheets[n],{header:1,defval:""})));let parsed=[];rows.forEach((r,idx)=>{let cells=r.map(x=>String(x||"").trim());let text=cells.join(" ").toUpperCase();if(text.includes("SERVIÇO")||text.includes("SERVICO"))return;if(!(text.includes("PEÇA")||text.includes("PECA")||text.includes("COD")))return;let desc=cells.find(c=>c.length>6&&!/PE[ÇC]A|COD|VALOR|QTD|DESCRI/i.test(c))||"";if(!desc||desc.toUpperCase()==="DESCRIÇÃO")return;let code=cells.find(c=>/[A-Z0-9]{5,}/i.test(c)&&! /PE[ÇC]A|COD|DESCRI/i.test(c))||"sem oem";let nums=cells.map(parseMoney).filter(n=>n>0);let qty=nums.find(n=>n>0&&n<1000)||1;let total=nums[nums.length-1]||0;parsed.push({id:uid("item"),seq:draftItems.length+parsed.length+1,oem:code,altCode:"",desc,qty,type:"geral",saleUnit:total&&qty?total/qty:0,saleTotal:total})});draftItems.push(...parsed);renderDraft();alert(parsed.length+" peça(s) importadas.")};reader.readAsArrayBuffer(file)}
 window.addEventListener("load",init);
 </script>
+
+<script>
+/* valor_IA PATCH V1.1 — cotações estáveis, comparação organizada e nicho salvando */
+(function(){
+  window.__valorIAOpenDetails = window.__valorIAOpenDetails || {};
+  window.__valorIASelectedSend = window.__valorIASelectedSend || {};
+
+  function E(v){
+    if(typeof esc === "function") return esc(v);
+    return String(v==null?"":v).replace(/[&<>"']/g,function(m){return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#039;"}[m]});
+  }
+  function M(v){
+    if(typeof money === "function") return money(v);
+    return Number(v||0).toLocaleString("pt-BR",{style:"currency",currency:"BRL"});
+  }
+  function K(source,id){ return source + "__" + id; }
+  function getQ(source,id){ return (typeof getQuote === "function") ? getQuote(source,id) : null; }
+  function bestFor(q,it){
+    if(typeof bestForItem === "function") return bestForItem(q,it);
+    return null;
+  }
+  function rowsFor(q,it){
+    if(typeof responsesForItem === "function") return responsesForItem(q,it);
+    return [];
+  }
+  function suppliersAll(){
+    var arr = [];
+    try{
+      arr = arr.concat(Object.entries(suppliers||{}).map(function(pair){
+        var id=pair[0], s=pair[1]||{};
+        return {id:id, name:s.name||s.nome||id, phone:s.phone||s.whatsapp||"", types:s.types||s.tipos||[]};
+      }));
+    }catch(e){}
+    try{
+      arr = arr.concat(Object.entries(fornecedores||{}).map(function(pair){
+        var id=pair[0], s=pair[1]||{};
+        return {id:id, name:s.nome||s.name||id, phone:s.whatsapp||s.phone||"", types:s.tipos||s.types||[]};
+      }));
+    }catch(e){}
+    var seen = {};
+    return arr.filter(function(s){ if(seen[s.id]) return false; seen[s.id]=true; return true; });
+  }
+  function detailBox(html){
+    return '<div class="card" style="box-shadow:none;margin-top:12px">'+html+'<p class="muted small">Powered by thIAguinho Soluções Digitais</p></div>';
+  }
+  function comparisonHtml(q){
+    var html = '<h3>📊 Comparação organizada</h3><p class="muted">Cada peça fica separada com todas as respostas dos fornecedores: marca, código, preço, prazo, observação e bruto do WhatsApp.</p>';
+    (q.items||[]).forEach(function(it){
+      var qty = Number(it.qty||1);
+      var rows = rowsFor(q,it);
+      html += '<div class="quote" style="background:#f8fafc">';
+      html += '<h3 style="margin-top:0">'+E(it.seq||"")+'. '+E(it.desc||"-")+'</h3>';
+      html += '<span class="pill">Código: '+E(it.oem||"-")+'</span><span class="pill">Qtd: '+qty+'</span><span class="pill">Venda/base: '+M(it.saleTotal||0)+'</span>';
+      if(!rows.length){
+        html += '<p class="bad">Sem resposta para esta peça.</p>';
+      }else{
+        html += '<div class="tablewrap" style="margin-top:10px"><table><thead><tr><th>Fornecedor</th><th>Status</th><th>Marca</th><th>Cód. marca</th><th>Descrição</th><th>Unit.</th><th>Total</th><th>Prazo</th><th>Obs./bruto</th></tr></thead><tbody>';
+        rows.forEach(function(r){
+          html += '<tr>'
+            + '<td><b>'+E(r.supplierName||r.fornecedorNome||"-")+'</b><br><span class="muted">'+E(r.source||r.origem||"")+'</span></td>'
+            + '<td>'+(r.available===false || r.temDisponivel===False ? '<span class="bad">Não tem</span>' : '<span class="ok">Tem</span>')+'</td>'
+            + '<td>'+E(r.brand||r.marca||"-")+'</td>'
+            + '<td>'+E(r.brandCode||r.codigoMarca||"-")+'</td>'
+            + '<td>'+E(r.desc||r.descricaoFornecedor||"-")+'</td>'
+            + '<td>'+(Number(r.price||r.precoUnitario||0)>0?M(r.price||r.precoUnitario):"-")+'</td>'
+            + '<td>'+(Number(r.price||r.precoUnitario||0)>0?M(Number(r.price||r.precoUnitario)*qty):"-")+'</td>'
+            + '<td>'+E(r.availability||r.disponibilidade||"-")+'</td>'
+            + '<td>'+E(r.obs||r.observacao||"-")+(r.raw?'<br><span class="muted">Bruto: '+E(r.raw)+'</span>':'')+'</td>'
+            + '</tr>';
+        });
+        html += '</tbody></table></div>';
+      }
+      html += '</div>';
+    });
+    return detailBox(html);
+  }
+  function itemsHtml(q){
+    var html = '<h3>📦 Peças da cotação</h3><div class="tablewrap"><table><thead><tr><th>#</th><th>Código</th><th>Descrição</th><th>Qtd</th><th>Venda/base</th><th>Tipo</th></tr></thead><tbody>';
+    (q.items||[]).forEach(function(it){
+      html += '<tr><td>'+E(it.seq||"")+'</td><td>'+E(it.oem||"-")+'</td><td><b>'+E(it.desc||"-")+'</b></td><td>'+E(it.qty||1)+'</td><td>'+M(it.saleTotal||0)+'</td><td>'+E(it.type||"geral")+'</td></tr>';
+    });
+    html += '</tbody></table></div>';
+    return detailBox(html);
+  }
+  function rawHtml(q){
+    var raw = Object.entries(q.rawReplies||{}).sort(function(a,b){return (b[1].receivedAt||0)-(a[1].receivedAt||0);});
+    var html = '<h3>💬 Respostas diretas no WhatsApp</h3>';
+    if(!raw.length) html += '<p class="muted">Nenhuma resposta direta registrada.</p>';
+    raw.forEach(function(pair){
+      var r = pair[1]||{};
+      html += '<div class="quote"><b>'+E(r.supplierName||r.supplierId||"Fornecedor")+'</b><br><span class="muted">'+(r.receivedAt?new Date(r.receivedAt).toLocaleString("pt-BR"):"")+' — '+E(r.parseStatus||"")+'</span><pre>'+E(r.text||"")+'</pre></div>';
+    });
+    return detailBox(html);
+  }
+  function selectedMap(source,id){
+    var k = K(source,id);
+    if(!window.__valorIASelectedSend[k]) window.__valorIASelectedSend[k] = {};
+    return window.__valorIASelectedSend[k];
+  }
+  window.toggleSendSupplierStable = function(source,id,sid,checked){
+    selectedMap(source,id)[sid] = !!checked;
+  };
+  window.selectAllSendStable = function(source,id){
+    suppliersAll().forEach(function(s){ selectedMap(source,id)[s.id] = true; });
+    window.__valorIAOpenDetails[K(source,id)] = "send";
+    renderQuotes(allQuotes());
+  };
+  window.clearSendStable = function(source,id){
+    window.__valorIASelectedSend[K(source,id)] = {};
+    window.__valorIAOpenDetails[K(source,id)] = "send";
+    renderQuotes(allQuotes());
+  };
+  window.enqueueSelectedStable = function(source,id){
+    var q = getQ(source,id);
+    if(!q) return alert("Cotação não encontrada.");
+    var selected = selectedMap(source,id);
+    var chosen = suppliersAll().filter(function(s){ return !!selected[s.id]; });
+    if(!chosen.length) return alert("Selecione pelo menos um fornecedor.");
+    var updates = {};
+    chosen.forEach(function(s){
+      var key = (typeof uid==="function") ? uid("wa") : ("wa_"+Date.now()+"_"+Math.random().toString(16).slice(2));
+      var msg = (typeof buildMessage==="function") ? buildMessage(q,s.id,s) : ("Cotação "+(q.number||q.id));
+      var phone = (typeof phoneBR==="function") ? phoneBR(s.phone||s.whatsapp) : String(s.phone||s.whatsapp||"").replace(/\D/g,"");
+      updates["whatsappQueue/"+key] = {
+        quoteId:q.id, quoteSource:q.source, quoteNumber:q.number,
+        supplierId:s.id, supplierName:s.name||s.nome||s.id,
+        phone:phone, message:msg, status:"pending", createdAt:Date.now(),
+        signature:"Powered by thIAguinho Soluções Digitais"
+      };
+    });
+    db.ref().update(updates).then(function(){
+      alert(chosen.length+" mensagem(ns) adicionada(s) na fila do robô.");
+      window.__valorIAOpenDetails[K(source,id)] = "send";
+      renderQuotes(allQuotes());
+    });
+  };
+  function sendHtml(q){
+    var list = suppliersAll();
+    var selected = selectedMap(q.source,q.id);
+    var count = Object.values(selected).filter(Boolean).length;
+    var html = '<h3>📨 Enviar convites aos fornecedores</h3><p class="muted">A seleção fica estável e esta área não fecha mais quando o Firebase atualiza.</p>';
+    html += '<div class="row">'
+      + '<button class="light" onclick="selectAllSendStable(\''+q.source+'\',\''+q.id+'\')">Selecionar todos</button>'
+      + '<button class="light" onclick="clearSendStable(\''+q.source+'\',\''+q.id+'\')">Limpar seleção</button>'
+      + '<button onclick="enqueueSelectedStable(\''+q.source+'\',\''+q.id+'\')">Enviar selecionados com robô ('+count+')</button>'
+      + '</div>';
+    html += '<div class="grid" style="margin-top:10px">';
+    list.forEach(function(s){
+      html += '<label class="checkboxCard"><input type="checkbox" '+(selected[s.id]?'checked':'')+' onchange="toggleSendSupplierStable(\''+q.source+'\',\''+q.id+'\',\''+s.id+'\',this.checked)"> <b>'+E(s.name||s.nome||s.id)+'</b><br><span class="muted">'+E(s.phone||s.whatsapp||"")+'</span></label>';
+    });
+    html += '</div>';
+    return detailBox(html);
+  }
+  window.showComparison = function(source,id){ window.__valorIAOpenDetails[K(source,id)] = "comparison"; renderQuotes(allQuotes()); };
+  window.showItems = function(source,id){ window.__valorIAOpenDetails[K(source,id)] = "items"; renderQuotes(allQuotes()); };
+  window.showRaw = function(source,id){ window.__valorIAOpenDetails[K(source,id)] = "raw"; renderQuotes(allQuotes()); };
+  window.showSend = function(source,id){ window.__valorIAOpenDetails[K(source,id)] = "send"; renderQuotes(allQuotes()); };
+
+  window.renderQuotes = function(qs){
+    qs = qs || (typeof allQuotes==="function" ? allQuotes() : []);
+    var el = document.getElementById("quotesList");
+    if(!el) return;
+    if(!qs.length){ el.innerHTML='<p class="muted">Nenhuma cotação criada.</p>'; return; }
+    el.innerHTML = qs.map(function(q){
+      var answered = (q.items||[]).filter(function(it){ return !!bestFor(q,it); }).length;
+      var lucro = 0;
+      (q.items||[]).forEach(function(it){
+        var b = bestFor(q,it);
+        if(b) lucro += Number(it.saleTotal||0) - (Number(b.price||b.precoUnitario||0)*Number(it.qty||1));
+      });
+      var v = q.vehicle || {};
+      var mode = window.__valorIAOpenDetails[K(q.source,q.id)] || "";
+      var detail = "";
+      if(mode==="comparison") detail = comparisonHtml(q);
+      if(mode==="items") detail = itemsHtml(q);
+      if(mode==="raw") detail = rawHtml(q);
+      if(mode==="send") detail = sendHtml(q);
+      return '<div class="quote '+(String(q.status).toLowerCase().includes("cancel")?'canceled':(statusOpen(q.status)?'':'closed'))+'">'
+        + '<h3>'+E(q.number)+' <span class="pill">'+E(q.source)+'</span> <span class="pill">'+E(q.status)+'</span></h3>'
+        + '<p class="muted">'+E([v.marca||v.brand,v.modelo||v.model,v.ano||v.year,v.placa||v.plate].filter(Boolean).join(" "))+' — '+(q.items||[]).length+' item(ns) — respondidos '+answered+'/'+(q.items||[]).length+'</p>'
+        + '<p><b>Lucro estimado:</b> <span class="'+(lucro>=0?'ok':'bad')+'">'+M(lucro)+'</span></p>'
+        + '<div class="row">'
+        + '<button onclick="showComparison(\''+q.source+'\',\''+q.id+'\')">Comparar respostas</button>'
+        + '<button class="light" onclick="showItems(\''+q.source+'\',\''+q.id+'\')">Ver peças</button>'
+        + '<button class="light" onclick="showRaw(\''+q.source+'\',\''+q.id+'\')">Respostas WhatsApp</button>'
+        + '<button class="light" onclick="showSend(\''+q.source+'\',\''+q.id+'\')">Enviar fornecedores</button>'
+        + '<button class="green" onclick="generateOC(\''+q.source+'\',\''+q.id+'\')">Gerar OC</button>'
+        + '<button class="light" onclick="editQuote(\''+q.source+'\',\''+q.id+'\')">Editar</button>'
+        + (statusOpen(q.status)?'<button class="amber" onclick="setQuoteStatus(\''+q.source+'\',\''+q.id+'\',\'fechada\')">Encerrar</button><button class="red" onclick="setQuoteStatus(\''+q.source+'\',\''+q.id+'\',\'cancelada\')">Cancelar</button>':'<button class="green" onclick="setQuoteStatus(\''+q.source+'\',\''+q.id+'\',\'aberta\')">Reabrir</button>')
+        + '<button class="red" onclick="deleteQuote(\''+q.source+'\',\''+q.id+'\')">Excluir</button>'
+        + '</div>'+detail+'</div>';
+    }).join("");
+  };
+
+  var oldSaveSettings = window.saveSettings;
+  window.saveSettings = function(){
+    if(typeof db==="undefined" || !db) return alert("Banco ainda não carregou.");
+    var payload = {
+      name:document.getElementById("setName").value.trim(),
+      phone:document.getElementById("setPhone").value.trim(),
+      managerPhone:document.getElementById("setManagerPhone").value.trim(),
+      city:document.getElementById("setCity").value.trim(),
+      owner:document.getElementById("setOwner").value.trim(),
+      niche:document.getElementById("setNiche").value,
+      customIcon:document.getElementById("setIcon").value.trim(),
+      messageTemplate:document.getElementById("setMessage").value.trim()||DEFAULT_MSG,
+      updatedAt:Date.now(),
+      signature:"Powered by thIAguinho Soluções Digitais"
+    };
+    return db.ref("settings/main").update(payload).then(function(){ alert("Estabelecimento e nicho salvos."); });
+  };
+})();
+</script>
+
 </body>
 </html>
